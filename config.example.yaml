@@ -1,0 +1,4 @@
+proxy: 'socks5h://127.0.0.1:9050'
+api_token: '__change_me__'
+console_socket: 'console.sock'
+work_dir: 'db'

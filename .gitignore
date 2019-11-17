@@ -1,0 +1,7 @@
+.rocks/
+
+/db/
+*.log
+*.sock
+
+config.yaml
