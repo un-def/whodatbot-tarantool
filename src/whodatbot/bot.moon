@@ -7,6 +7,7 @@ import UserInfoStorage, UserInfoHistoryStorage from require 'whodatbot.storage.u
 
 table_insert = table.insert
 table_remove = table.remove
+table_concat = table.concat
 
 
 _extract_users = (tbl, accum) ->
@@ -28,6 +29,32 @@ extract_users = (msg) ->
     accum = {}
     _extract_users msg, accum
     return [u for _, u in pairs accum]
+
+
+user_info_fields = {
+    {'tg_id', 'ID'}
+    {'first_name', 'First Name'}
+    {'last_name', 'Last Name'}
+    {'username', 'Username'}
+}
+
+
+format_user_info = (user_info) ->
+    strings = {}
+    for {field_name, verbose_name} in *user_info_fields
+        value = user_info[field_name]
+        if value
+            table_insert strings, '%s: %s'\format(verbose_name, value)
+    return table_concat strings, '\n'
+
+
+help_message = [[
+/whois — get your user info
+/whoami — same as /whois
+/whois <id> — get user info for user with id <id>
+/history — get your user info history
+/history <id> — get user info history for user with id <id>
+]]
 
 
 class CommandRegistry
@@ -93,7 +120,7 @@ class WhoDatBot
                 @user_info_history\insert id, first_name, last_name, username
             box.commit!
         text = msg.text
-        if msg.chat.id > 0 and text and text\sub(1, 1) == '/'
+        if msg.chat.id > 0 and not msg.forward_date and text and text\sub(1, 1) == '/'
             func, args = @cmd\get_handler text
             if not func
                 @bot\send_message msg.chat.id, 'Unknown command. See /help'
@@ -104,11 +131,12 @@ class WhoDatBot
         log.info 'start with secret %s', secret
 
     help: cmd 'help', 'start', (msg) =>
-        @bot\send_message msg.chat.id, 'no help'
+        @bot\send_message msg.chat.id, help_message
 
-    whoami: cmd 'whoami', (msg) =>
+    whois_self: cmd 'whois', 'whoami', (msg) =>
         user_info = @user_info\get msg.from.id
-        @bot\send_message msg.chat.id, tostring user_info
+        formatted_user_info = format_user_info user_info
+        @bot\send_message msg.chat.id, formatted_user_info
 
     whois: cmd 'whois (%d+)', (msg, user_id) =>
         user_info = @user_info\get tonumber user_id
@@ -123,9 +151,9 @@ class WhoDatBot
         user_id = tonumber user_id
         history = @user_info_history\get user_id
         if #history == 0
-            @bot\send_message msg.chat.id, 'no info'
+            @bot\send_message msg.chat.id, 'no user info'
         else
-            response = table.concat [tostring e for e in *history], '\n'
+            response = table.concat [format_user_info e for e in *history], '\n\n'
             @bot\send_message msg.chat.id, response
 
 

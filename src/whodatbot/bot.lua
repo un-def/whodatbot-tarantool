@@ -8,6 +8,7 @@ do
 end
 local table_insert = table.insert
 local table_remove = table.remove
+local table_concat = table.concat
 local _extract_users
 _extract_users = function(tbl, accum)
   local is_bot, id, first_name
@@ -40,6 +41,44 @@ extract_users = function(msg)
   end
   return _accum_0
 end
+local user_info_fields = {
+  {
+    'tg_id',
+    'ID'
+  },
+  {
+    'first_name',
+    'First Name'
+  },
+  {
+    'last_name',
+    'Last Name'
+  },
+  {
+    'username',
+    'Username'
+  }
+}
+local format_user_info
+format_user_info = function(user_info)
+  local strings = { }
+  for _index_0 = 1, #user_info_fields do
+    local _des_0 = user_info_fields[_index_0]
+    local field_name, verbose_name
+    field_name, verbose_name = _des_0[1], _des_0[2]
+    local value = user_info[field_name]
+    if value then
+      table_insert(strings, ('%s: %s'):format(verbose_name, value))
+    end
+  end
+  return table_concat(strings, '\n')
+end
+local help_message = [[/whois — get your user info
+/whoami — same as /whois
+/whois <id> — get user info for user with id <id>
+/history — get your user info history
+/history <id> — get user info history for user with id <id>
+]]
 local CommandRegistry
 do
   local _class_0
@@ -136,7 +175,7 @@ do
         box.commit()
       end
       local text = msg.text
-      if msg.chat.id > 0 and text and text:sub(1, 1) == '/' then
+      if msg.chat.id > 0 and not msg.forward_date and text and text:sub(1, 1) == '/' then
         local func, args = self.cmd:get_handler(text)
         if not func then
           return self.bot:send_message(msg.chat.id, 'Unknown command. See /help')
@@ -149,11 +188,12 @@ do
       return log.info('start with secret %s', secret)
     end),
     help = cmd('help', 'start', function(self, msg)
-      return self.bot:send_message(msg.chat.id, 'no help')
+      return self.bot:send_message(msg.chat.id, help_message)
     end),
-    whoami = cmd('whoami', function(self, msg)
+    whois_self = cmd('whois', 'whoami', function(self, msg)
       local user_info = self.user_info:get(msg.from.id)
-      return self.bot:send_message(msg.chat.id, tostring(user_info))
+      local formatted_user_info = format_user_info(user_info)
+      return self.bot:send_message(msg.chat.id, formatted_user_info)
     end),
     whois = cmd('whois (%d+)', function(self, msg, user_id)
       local user_info = self.user_info:get(tonumber(user_id))
@@ -170,18 +210,18 @@ do
       user_id = tonumber(user_id)
       local history = self.user_info_history:get(user_id)
       if #history == 0 then
-        return self.bot:send_message(msg.chat.id, 'no info')
+        return self.bot:send_message(msg.chat.id, 'no user info')
       else
         local response = table.concat((function()
           local _accum_0 = { }
           local _len_0 = 1
           for _index_0 = 1, #history do
             local e = history[_index_0]
-            _accum_0[_len_0] = tostring(e)
+            _accum_0[_len_0] = format_user_info(e)
             _len_0 = _len_0 + 1
           end
           return _accum_0
-        end)(), '\n')
+        end)(), '\n\n')
         return self.bot:send_message(msg.chat.id, response)
       end
     end)
