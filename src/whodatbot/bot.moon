@@ -1,6 +1,6 @@
 log = require 'log'
 
-import TelegramBot from require 'taragram'
+import TelegramBot, UPDATE_TYPES from require 'taragram'
 
 import UserInfoStorage, UserInfoHistoryStorage from require 'whodatbot.storage.userinfo'
 
@@ -88,6 +88,8 @@ class WhoDatBot
 
     cmd: cmd
 
+    allowed_updates: {UPDATE_TYPES.MESSAGE, UPDATE_TYPES.CALLBACK_QUERY}
+
     new: (api_token, recreate) =>
         @bot = TelegramBot(api_token)
         @user_info = UserInfoStorage(recreate)
@@ -101,60 +103,127 @@ class WhoDatBot
         return true
 
     run: =>
-        message_channel = @bot\start_polling 'polling_fiber'
+        update_channel = @bot\start_polling 'polling_fiber', @allowed_updates
         while true
-            @_process_msg message_channel
+            @_process_update update_channel
 
-    _process_msg: (channel) =>
-        msg = channel\get!
-        log.info msg
-        if not msg
+    _process_update: (channel) =>
+        update = channel\get!
+        if not update
             -- what?!
+            log.warn 'no update'
             return
-        for user in *extract_users msg
-            log.info 'user found: %s', user.id
+        update_type = update.type
+        update_object = update.object
+        log.info 'new update with type %s', update_type
+        switch update_type
+            when UPDATE_TYPES.MESSAGE
+                @_process_message update_object
+            when UPDATE_TYPES.CALLBACK_QUERY
+                @_process_callback_query update_object
+            else
+                log.warn 'unexpected update'
+
+    _process_message: (message) =>
+        log.info message
+
+        is_private_chat = message.chat.id > 0
+        is_forward = message.forward_date ~= nil
+        from_user_id = message.from.id
+        chat_id = message.chat.id
+        forward_sender_name = message.forward_sender_name
+
+        need_to_respond = is_private_chat and is_forward
+
+        if forward_sender_name
+            log.info 'hidden user: %s', forward_sender_name
+            if need_to_respond
+                @bot\send_message chat_id, '%s has hidden his account'\format(forward_sender_name)
+                need_to_respond = false
+
+        for user in *extract_users message
             {:id, :first_name, :last_name, :username} = user
+
             box.begin!
             upserted = @user_info\maybe_upsert id, first_name, last_name, username
             if upserted
                 @user_info_history\insert id, first_name, last_name, username
             box.commit!
-        text = msg.text
-        if msg.chat.id > 0 and not msg.forward_date and text and text\sub(1, 1) == '/'
+
+            if id == from_user_id
+                log.info 'user (sender): %s', id
+            else
+                log.info 'user: %s', id
+                if need_to_respond
+                    @whois message, id
+                    need_to_respond = false
+
+        text = message.text
+        if is_private_chat and not is_forward and text and text\sub(1, 1) == '/'
             func, args = @cmd\get_handler text
             if not func
-                @bot\send_message msg.chat.id, 'Unknown command. See /help'
+                @bot\send_message chat_id, 'Unknown command. See /help'
             else
-                func @, msg, unpack args
+                func @, message, unpack args
 
-    start: cmd 'start (%d+)', (msg, secret) =>
+        if need_to_respond
+            @bot\send_message chat_id, 'There is no user in the message'
+
+    _process_callback_query: (callback_query) =>
+        log.info callback_query
+        callback_data = callback_query.data
+        log.info 'callback_query.data: %s', callback_data
+        @bot\answer_callback_query callback_query.id
+        callback_type, payload = callback_data\match '^(%a+):(%w+)$'
+        if not callback_type
+            log.warn 'unknown callback_query.data', callback_data
+        if callback_type == 'history'
+            user_id = tonumber payload
+            if not user_id
+                log.warn 'failed to parse user_id: %s', payload
+                return
+            @history callback_query.message, user_id
+        else
+            log.warn 'unknown callback type: %s', callback_type
+
+    start: cmd 'start (%d+)', (message, secret) =>
         log.info 'start with secret %s', secret
 
-    help: cmd 'help', 'start', (msg) =>
-        @bot\send_message msg.chat.id, help_message
+    help: cmd 'help', 'start', (message) =>
+        @bot\send_message message.chat.id, help_message
 
-    whois_self: cmd 'whois', 'whoami', (msg) =>
-        user_info = @user_info\get msg.from.id
-        formatted_user_info = format_user_info user_info
-        @bot\send_message msg.chat.id, formatted_user_info
+    whois_self: cmd 'whois', 'whoami', (message) => @whois message, message.from.id
 
-    whois: cmd 'whois (%d+)', (msg, user_id) =>
+    whois: cmd 'whois (%d+)', (message, user_id) =>
+        chat_id = message.chat.id
         user_info = @user_info\get tonumber user_id
         if not user_info
-            @bot\send_message msg.chat.id, 'no info'
-        else
-            @bot\send_message msg.chat.id, tostring user_info
+            @bot\send_message chat_id, 'no info'
+            return
+        button_history = {
+            text: 'History'
+            callback_data: 'history:%s'\format(user_id)
+        }
+        inline_keyboard = {
+            {button_history}
+        }
+        text = format_user_info user_info
+        @bot\send_message chat_id, text, {
+            reply_markup: {
+                inline_keyboard: inline_keyboard
+            }
+        }
 
-    history_self: cmd 'history', (msg) => @history msg, msg.from.id
+    history_self: cmd 'history', (message) => @history message, message.from.id
 
-    history: cmd 'history (%d+)', (msg, user_id) =>
-        user_id = tonumber user_id
-        history = @user_info_history\get user_id
+    history: cmd 'history (%d+)', (message, user_id) =>
+        chat_id = message.chat.id
+        history = @user_info_history\get tonumber user_id
         if #history == 0
-            @bot\send_message msg.chat.id, 'no user info'
+            @bot\send_message chat_id, 'no user info'
         else
             response = table.concat [format_user_info e for e in *history], '\n\n'
-            @bot\send_message msg.chat.id, response
+            @bot\send_message chat_id, response
 
 
 

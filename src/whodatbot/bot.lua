@@ -1,6 +1,9 @@
 local log = require('log')
-local TelegramBot
-TelegramBot = require('taragram').TelegramBot
+local TelegramBot, UPDATE_TYPES
+do
+  local _obj_0 = require('taragram')
+  TelegramBot, UPDATE_TYPES = _obj_0.TelegramBot, _obj_0.UPDATE_TYPES
+end
 local UserInfoStorage, UserInfoHistoryStorage
 do
   local _obj_0 = require('whodatbot.storage.userinfo')
@@ -141,6 +144,10 @@ do
   local _class_0
   local _base_0 = {
     cmd = cmd,
+    allowed_updates = {
+      UPDATE_TYPES.MESSAGE,
+      UPDATE_TYPES.CALLBACK_QUERY
+    },
     init = function(self)
       local resp, err = self.bot:get_me()
       if not resp then
@@ -150,21 +157,47 @@ do
       return true
     end,
     run = function(self)
-      local message_channel = self.bot:start_polling('polling_fiber')
+      local update_channel = self.bot:start_polling('polling_fiber', self.allowed_updates)
       while true do
-        self:_process_msg(message_channel)
+        self:_process_update(update_channel)
       end
     end,
-    _process_msg = function(self, channel)
-      local msg = channel:get()
-      log.info(msg)
-      if not msg then
+    _process_update = function(self, channel)
+      local update = channel:get()
+      if not update then
+        log.warn('no update')
         return
       end
-      local _list_0 = extract_users(msg)
+      local update_type = update.type
+      local update_object = update.object
+      log.info('new update with type %s', update_type)
+      local _exp_0 = update_type
+      if UPDATE_TYPES.MESSAGE == _exp_0 then
+        return self:_process_message(update_object)
+      elseif UPDATE_TYPES.CALLBACK_QUERY == _exp_0 then
+        return self:_process_callback_query(update_object)
+      else
+        return log.warn('unexpected update')
+      end
+    end,
+    _process_message = function(self, message)
+      log.info(message)
+      local is_private_chat = message.chat.id > 0
+      local is_forward = message.forward_date ~= nil
+      local from_user_id = message.from.id
+      local chat_id = message.chat.id
+      local forward_sender_name = message.forward_sender_name
+      local need_to_respond = is_private_chat and is_forward
+      if forward_sender_name then
+        log.info('hidden user: %s', forward_sender_name)
+        if need_to_respond then
+          self.bot:send_message(chat_id, ('%s has hidden his account'):format(forward_sender_name))
+          need_to_respond = false
+        end
+      end
+      local _list_0 = extract_users(message)
       for _index_0 = 1, #_list_0 do
         local user = _list_0[_index_0]
-        log.info('user found: %s', user.id)
         local id, first_name, last_name, username
         id, first_name, last_name, username = user.id, user.first_name, user.last_name, user.username
         box.begin()
@@ -173,44 +206,89 @@ do
           self.user_info_history:insert(id, first_name, last_name, username)
         end
         box.commit()
-      end
-      local text = msg.text
-      if msg.chat.id > 0 and not msg.forward_date and text and text:sub(1, 1) == '/' then
-        local func, args = self.cmd:get_handler(text)
-        if not func then
-          return self.bot:send_message(msg.chat.id, 'Unknown command. See /help')
+        if id == from_user_id then
+          log.info('user (sender): %s', id)
         else
-          return func(self, msg, unpack(args))
+          log.info('user: %s', id)
+          if need_to_respond then
+            self:whois(message, id)
+            need_to_respond = false
+          end
         end
       end
+      local text = message.text
+      if is_private_chat and not is_forward and text and text:sub(1, 1) == '/' then
+        local func, args = self.cmd:get_handler(text)
+        if not func then
+          self.bot:send_message(chat_id, 'Unknown command. See /help')
+        else
+          func(self, message, unpack(args))
+        end
+      end
+      if need_to_respond then
+        return self.bot:send_message(chat_id, 'There is no user in the message')
+      end
     end,
-    start = cmd('start (%d+)', function(self, msg, secret)
+    _process_callback_query = function(self, callback_query)
+      log.info(callback_query)
+      local callback_data = callback_query.data
+      log.info('callback_query.data: %s', callback_data)
+      self.bot:answer_callback_query(callback_query.id)
+      local callback_type, payload = callback_data:match('^(%a+):(%w+)$')
+      if not callback_type then
+        log.warn('unknown callback_query.data', callback_data)
+      end
+      if callback_type == 'history' then
+        local user_id = tonumber(payload)
+        if not user_id then
+          log.warn('failed to parse user_id: %s', payload)
+          return
+        end
+        return self:history(callback_query.message, user_id)
+      else
+        return log.warn('unknown callback type: %s', callback_type)
+      end
+    end,
+    start = cmd('start (%d+)', function(self, message, secret)
       return log.info('start with secret %s', secret)
     end),
-    help = cmd('help', 'start', function(self, msg)
-      return self.bot:send_message(msg.chat.id, help_message)
+    help = cmd('help', 'start', function(self, message)
+      return self.bot:send_message(message.chat.id, help_message)
     end),
-    whois_self = cmd('whois', 'whoami', function(self, msg)
-      local user_info = self.user_info:get(msg.from.id)
-      local formatted_user_info = format_user_info(user_info)
-      return self.bot:send_message(msg.chat.id, formatted_user_info)
+    whois_self = cmd('whois', 'whoami', function(self, message)
+      return self:whois(message, message.from.id)
     end),
-    whois = cmd('whois (%d+)', function(self, msg, user_id)
+    whois = cmd('whois (%d+)', function(self, message, user_id)
+      local chat_id = message.chat.id
       local user_info = self.user_info:get(tonumber(user_id))
       if not user_info then
-        return self.bot:send_message(msg.chat.id, 'no info')
-      else
-        return self.bot:send_message(msg.chat.id, tostring(user_info))
+        self.bot:send_message(chat_id, 'no info')
+        return
       end
+      local button_history = {
+        text = 'History',
+        callback_data = ('history:%s'):format(user_id)
+      }
+      local inline_keyboard = {
+        {
+          button_history
+        }
+      }
+      local text = format_user_info(user_info)
+      return self.bot:send_message(chat_id, text, {
+        reply_markup = {
+          inline_keyboard = inline_keyboard
+        }
+      })
     end),
-    history_self = cmd('history', function(self, msg)
-      return self:history(msg, msg.from.id)
+    history_self = cmd('history', function(self, message)
+      return self:history(message, message.from.id)
     end),
-    history = cmd('history (%d+)', function(self, msg, user_id)
-      user_id = tonumber(user_id)
-      local history = self.user_info_history:get(user_id)
+    history = cmd('history (%d+)', function(self, message, user_id)
+      local chat_id = message.chat.id
+      local history = self.user_info_history:get(tonumber(user_id))
       if #history == 0 then
-        return self.bot:send_message(msg.chat.id, 'no user info')
+        return self.bot:send_message(chat_id, 'no user info')
       else
         local response = table.concat((function()
           local _accum_0 = { }
@@ -222,7 +300,7 @@ do
           end
           return _accum_0
         end)(), '\n\n')
-        return self.bot:send_message(msg.chat.id, response)
+        return self.bot:send_message(chat_id, response)
       end
     end)
   }
