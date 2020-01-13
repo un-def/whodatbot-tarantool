@@ -27,6 +27,12 @@ lint: build
 test: build
   @tarantool -e "require'busted.runner'{standalone=false};os.exit()"
 
+connect:
+  #!/bin/sh
+  socket=$(yq read config.yaml console_socket) || exit 1
+  [ "${socket}" = 'null' ] && exit 2
+  exec tarantoolctl connect "$(readlink -f "${socket}")"
+
 run: build
   mkdir -p db
   tarantool src/{{project}}/main.lua
