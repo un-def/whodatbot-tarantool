@@ -83,7 +83,11 @@ class UserInfoHistoryStorage extends Storage
         @space\insert {NULL, now, tg_id, first_name, last_name, username}
         return true
 
-    get: (tg_id) => @space.index.tg_id\select tg_id
+    get: (tg_id, reverse) =>
+        options = nil
+        if reverse
+            options = {iterator: 'REQ'}
+        @space.index.tg_id\select tg_id, options
 
 
 :UserInfoStorage, :UserInfoHistoryStorage

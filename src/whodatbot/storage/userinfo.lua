@@ -192,8 +192,14 @@ do
       })
       return true
     end),
-    get = function(self, tg_id)
-      return self.space.index.tg_id:select(tg_id)
+    get = function(self, tg_id, reverse)
+      local options = nil
+      if reverse then
+        options = {
+          iterator = 'REQ'
+        }
+      end
+      return self.space.index.tg_id:select(tg_id, options)
     end
   }
   _base_0.__index = _base_0

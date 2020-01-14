@@ -8,10 +8,10 @@ _list:
   @just --list
 
 install-deps:
-  {{rocksinstall}} https://raw.githubusercontent.com/un-def/taragram/master/taragram-scm-1.rockspec
+  while read dep; do {{rocksinstall}} "$dep"; done < deps.txt
 
 install-dev-deps: install-deps
-  for dep in moonscript inotify moonpick luacheck; do {{rocksinstall}} "$dep"; done
+  while read dep; do {{rocksinstall}} "$dep"; done < dev.deps.txt
 
 build:
   moonc src/

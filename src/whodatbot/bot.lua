@@ -9,6 +9,7 @@ do
   local _obj_0 = require('whodatbot.storage.userinfo')
   UserInfoStorage, UserInfoHistoryStorage = _obj_0.UserInfoStorage, _obj_0.UserInfoHistoryStorage
 end
+local os_date = os.date
 local table_insert = table.insert
 local table_remove = table.remove
 local table_concat = table.concat
@@ -62,6 +63,11 @@ local user_info_fields = {
     'Username'
   }
 }
+local NIL_PLACEHOLDER = '(not set)'
+local format_date
+format_date = function(unix_time)
+  return os_date('%Y-%m-%d', unix_time)
+end
 local format_user_info
 format_user_info = function(user_info)
   local strings = { }
@@ -75,6 +81,52 @@ format_user_info = function(user_info)
     end
   end
   return table_concat(strings, '\n')
+end
+local user_info_diff
+user_info_diff = function(user_info_old, user_info_new)
+  local lines = {
+    ('[%s] changes: '):format(format_date(user_info_new.datetime))
+  }
+  for _index_0 = 1, #user_info_fields do
+    local _des_0 = user_info_fields[_index_0]
+    local field_name, verbose_name
+    field_name, verbose_name = _des_0[1], _des_0[2]
+    local old = user_info_old[field_name]
+    local new = user_info_new[field_name]
+    if old ~= new then
+      old = old or NIL_PLACEHOLDER
+      new = new or NIL_PLACEHOLDER
+      table_insert(lines, ('%s: %s → %s'):format(verbose_name, old, new))
+    end
+  end
+  table_insert(lines, '')
+  return table_concat(lines, '\n')
+end
+local _format_history_first_last
+_format_history_first_last = function(user_info, first_last)
+  local lines = {
+    ('[%s] %s seen info:'):format(format_date(user_info.datetime), first_last),
+    format_user_info(user_info),
+    ''
+  }
+  return table_concat(lines, '\n')
+end
+local format_history
+format_history = function(history)
+  local parts = { }
+  if #history > 1 then
+    table_insert(parts, _format_history_first_last(history[1], 'last'))
+    local prev_user_info
+    for _index_0 = 1, #history do
+      local user_info = history[_index_0]
+      if prev_user_info then
+        table_insert(parts, user_info_diff(user_info, prev_user_info))
+      end
+      prev_user_info = user_info
+    end
+  end
+  table_insert(parts, _format_history_first_last(history[#history], 'first'))
+  return table_concat(parts, '\n')
 end
 local help_message = [[/whois — get your user info
 /whoami — same as /whois
@@ -191,7 +243,7 @@ do
       if forward_sender_name then
         log.info('hidden user: %s', forward_sender_name)
         if need_to_respond then
-          self.bot:send_message(chat_id, ('%s has hidden his account'):format(forward_sender_name))
+          self.bot:send_message(chat_id, ('%s has hidden their account'):format(forward_sender_name))
           need_to_respond = false
         end
       end
@@ -286,21 +338,11 @@ do
     end),
     history = cmd('history (%d+)', function(self, message, user_id)
       local chat_id = message.chat.id
-      local history = self.user_info_history:get(tonumber(user_id))
+      local history = self.user_info_history:get(tonumber(user_id), true)
       if #history == 0 then
-        return self.bot:send_message(chat_id, 'no user info')
+        return self.bot:send_message(chat_id, 'No user info')
       else
-        local response = table.concat((function()
-          local _accum_0 = { }
-          local _len_0 = 1
-          for _index_0 = 1, #history do
-            local e = history[_index_0]
-            _accum_0[_len_0] = format_user_info(e)
-            _len_0 = _len_0 + 1
-          end
-          return _accum_0
-        end)(), '\n\n')
-        return self.bot:send_message(chat_id, response)
+        return self.bot:send_message(chat_id, format_history(history))
       end
     end)
   }

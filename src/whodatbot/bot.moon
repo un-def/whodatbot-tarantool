@@ -5,6 +5,7 @@ import TelegramBot, UPDATE_TYPES from require 'taragram'
 import UserInfoStorage, UserInfoHistoryStorage from require 'whodatbot.storage.userinfo'
 
 
+os_date = os.date
 table_insert = table.insert
 table_remove = table.remove
 table_concat = table.concat
@@ -39,6 +40,12 @@ user_info_fields = {
 }
 
 
+NIL_PLACEHOLDER = '(not set)'
+
+
+format_date = (unix_time) -> os_date '%Y-%m-%d', unix_time
+
+
 format_user_info = (user_info) ->
     strings = {}
     for {field_name, verbose_name} in *user_info_fields
@@ -46,6 +53,41 @@ format_user_info = (user_info) ->
         if value
             table_insert strings, '%s: %s'\format(verbose_name, value)
     return table_concat strings, '\n'
+
+
+user_info_diff = (user_info_old, user_info_new) ->
+    lines = {'[%s] changes: '\format(format_date user_info_new.datetime)}
+    for {field_name, verbose_name} in *user_info_fields
+        old = user_info_old[field_name]
+        new = user_info_new[field_name]
+        if old != new
+            old = old or NIL_PLACEHOLDER
+            new = new or NIL_PLACEHOLDER
+            table_insert lines, '%s: %s → %s'\format(verbose_name, old, new)
+    table_insert lines, ''
+    return table_concat lines, '\n'
+
+
+_format_history_first_last = (user_info, first_last) ->
+    lines = {
+        '[%s] %s seen info:'\format(format_date(user_info.datetime), first_last)
+        format_user_info user_info
+        ''
+    }
+    return table_concat lines, '\n'
+
+
+format_history = (history) ->
+    parts = {}
+    if #history > 1
+        table_insert parts, _format_history_first_last(history[1], 'last')
+        local prev_user_info
+        for user_info in *history
+            if prev_user_info
+                table_insert parts, user_info_diff(user_info, prev_user_info)
+            prev_user_info = user_info
+    table_insert parts, _format_history_first_last(history[#history], 'first')
+    return table_concat parts, '\n'
 
 
 help_message = [[
@@ -138,7 +180,7 @@ class WhoDatBot
         if forward_sender_name
             log.info 'hidden user: %s', forward_sender_name
             if need_to_respond
-                @bot\send_message chat_id, '%s has hidden his account'\format(forward_sender_name)
+                @bot\send_message chat_id, '%s has hidden their account'\format(forward_sender_name)
                 need_to_respond = false
 
         for user in *extract_users message
@@ -218,13 +260,11 @@ class WhoDatBot
 
     history: cmd 'history (%d+)', (message, user_id) =>
         chat_id = message.chat.id
-        history = @user_info_history\get tonumber user_id
+        history = @user_info_history\get tonumber(user_id), true
         if #history == 0
-            @bot\send_message chat_id, 'no user info'
+            @bot\send_message chat_id, 'No user info'
         else
-            response = table.concat [format_user_info e for e in *history], '\n\n'
-            @bot\send_message chat_id, response
-
+            @bot\send_message chat_id, format_history history
 
 
 :WhoDatBot, :extract_users
