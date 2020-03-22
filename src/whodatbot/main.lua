@@ -52,13 +52,16 @@ local api_token = config.api_token
 if not api_token then
   die('api_token is not set')
 end
-local work_dir = config.work_dir
-if not work_dir then
-  die('work_dir is not set')
+local box_config = config.box
+if not box_config then
+  die('box config not found')
 end
-box.cfg({
-  work_dir = fio.abspath(work_dir)
-})
+local work_dir = box_config.work_dir
+if not work_dir then
+  die('box.work_dir is not set')
+end
+box_config.work_dir = fio.abspath(work_dir)
+box.cfg(box_config)
 local bot = WhoDatBot(api_token, false)
 local ok, err = bot:init()
 if not ok then

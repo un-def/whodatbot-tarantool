@@ -54,12 +54,14 @@ if not api_token
     die 'api_token is not set'
 
 
-work_dir = config.work_dir
+box_config = config.box
+if not box_config
+    die 'box config not found'
+work_dir = box_config.work_dir
 if not work_dir
-    die 'work_dir is not set'
-box.cfg {
-    work_dir: fio.abspath work_dir
-}
+    die 'box.work_dir is not set'
+box_config.work_dir = fio.abspath work_dir
+box.cfg box_config
 
 
 bot = WhoDatBot(api_token, false)
