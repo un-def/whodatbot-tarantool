@@ -55,7 +55,7 @@ docker-load filename:
 
 docker-run tag='latest' config_path=(cwd + '/config.yaml') db_path=(cwd + '/db') +args='':
   docker run \
-    -d --restart unless-stopped \
+    -d --restart always \
    --log-driver journald \
     -v {{config_path}}:/opt/whodatbot/config.yaml \
     -v {{db_path}}:/var/lib/tarantool \
