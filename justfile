@@ -33,7 +33,7 @@ test: build
 
 connect:
   #!/bin/sh
-  socket=$(yq read config.yaml console_socket) || exit 1
+  socket=$(yq eval '.console_socket' config.yaml) || exit 1
   [ "${socket}" = 'null' ] && exit 2
   exec tarantoolctl connect "$(readlink -f "${socket}")"
 
